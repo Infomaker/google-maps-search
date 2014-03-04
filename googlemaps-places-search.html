@@ -11,6 +11,16 @@
         padding: 0px
     }
 
+    .loader {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        z-index: 10000;
+        text-align: center;
+        padding-top: 25%;
+        background-color: #A0A0A0
+    }
+
     .controls {
         margin-top: 16px;
         border: 1px solid transparent;
@@ -109,6 +119,9 @@ var npI18n = {
     }};
 
 function initialize() {
+    var loader = document.getElementById("loader");
+    loader.parentNode.removeChild(loader);
+
     places.addListener(uiPlacesUpdater);
 
     var placesList = document.getElementById('placesList');
@@ -295,6 +308,8 @@ function showPins(pins) {
     var maxx = null;
     var miny = null;
     var maxy = null;
+    var location, iconData, marker;
+    var pin;
 
     if (!map) {
         console.log("No map");
@@ -316,31 +331,9 @@ function showPins(pins) {
         return;
     }
 
-    // Show new markers
+    // Zoom map
     for (i = 0; i < pins.length; i++) {
-        var pin = pins[i];
-        var location = new google.maps.LatLng(pin.lat, pin.lng);
-        var iconData = {
-            size: new google.maps.Size(71, 71),
-            origin: new google.maps.Point(0, 0),
-            anchor: new google.maps.Point(17, 34),
-            scaledSize: new google.maps.Size(35, 35)};
-        if (pin.icon) {
-            iconData.url = pin.icon;
-        }
-        else {
-            iconData.url = "http://maps.gstatic.com/mapfiles/place_api/icons/geocode-71.png";
-        }
-
-        var marker = new google.maps.Marker({
-                                                position: location,
-                                                map: map,
-                                                draggable: true,
-                                                icon: iconData
-                                            });
-        registerBalloonFunction(marker, pin);
-        registerDragFunction(marker, pin);
-        markersArray.push(marker);
+        pin = pins[i];
         if (minx === null || minx > pin.lng) {
             minx = pin.lng;
         }
@@ -362,6 +355,34 @@ function showPins(pins) {
     else if (minx !== maxx || miny === maxy) {
         map.fitBounds(new google.maps.LatLngBounds(new google.maps.LatLng(miny, minx), new google.maps.LatLng(maxy, maxx)));
     }
+
+    // Show new markers
+    for (i = 0; i < pins.length; i++) {
+        pin = pins[i];
+        location = new google.maps.LatLng(pin.lat, pin.lng);
+        iconData = {
+            size: new google.maps.Size(71, 71),
+            origin: new google.maps.Point(0, 0),
+            anchor: new google.maps.Point(17, 34),
+            scaledSize: new google.maps.Size(35, 35)};
+        if (pin.icon) {
+            iconData.url = pin.icon;
+        }
+        else {
+            iconData.url = "http://maps.gstatic.com/mapfiles/place_api/icons/geocode-71.png";
+        }
+
+        marker = new google.maps.Marker({
+                                                position: location,
+                                                map: map,
+                                                draggable: true,
+                                                icon: iconData
+                                            });
+        registerBalloonFunction(marker, pin);
+        registerDragFunction(marker, pin);
+        markersArray.push(marker);
+    }
+
 }
 
 function closePreviousBalloon() {
@@ -552,6 +573,7 @@ function checkInit() {
 </script>
 </head>
 <body onload="checkInit();">
+<div id="loader" class="loader"><i class="fa fa-spinner fa-spin fa-5x"></i></div>
 <div id="pac-controls">
     <input id="pac-input" type="text" class="controls">
 
