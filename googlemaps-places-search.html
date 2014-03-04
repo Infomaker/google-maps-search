@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Place Autocomplete</title>
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+<meta charset="utf-8">
+<style>
+    html, body, #map-canvas {
+        height: 100%;
+        margin: 0px;
+        padding: 0px
+    }
+
+    .controls {
+        margin-top: 16px;
+        border: 1px solid transparent;
+        border-radius: 2px 0 0 2px;
+        box-sizing: border-box;
+        -moz-box-sizing: border-box;
+        height: 32px;
+        outline: none;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    #pac-input {
+        background-color: #fff;
+        padding: 0 11px 0 13px;
+        width: 400px;
+        font-family: Roboto;
+        font-size: 15px;
+        font-weight: 300;
+        text-overflow: ellipsis;
+        -webkit-border-radius: 20px;
+    }
+
+    #placesList {
+        background-color: #fff;
+        padding: 0 11px 0 13px;
+        width: 400px;
+        font-family: Roboto;
+        font-size: 15px;
+        font-weight: 300;
+        text-overflow: ellipsis;
+        max-width: 600px;
+    }
+
+    #pac-input:focus {
+        border-color: #4d90fe;
+        margin-left: -1px;
+        padding-left: 14px; /* Regular padding-left + 1. */
+        width: 401px;
+    }
+
+    .pac-container {
+        font-family: Roboto;
+    }
+
+    #type-selector {
+        color: #fff;
+        /*background-color: #4d90fe;*/
+        background-color: rgba(77, 144, 254, 0.6);
+        padding: 5px 11px 0px 11px;
+    }
+
+    #type-selector label {
+        font-family: Roboto;
+        font-size: 13px;
+        font-weight: 300;
+    }
+
+    .input_size {
+        width: 20em;
+    }
+
+    .area_size {
+        width: 20em;
+        height: 4em;
+    }
+
+    .buttons {
+        width: 6em;
+        margin-right: 0.5em;
+        background-color: dodgerblue;
+        color: white;
+        font-family: Roboto, Arial, Helvetica, sans-serif;
+        font-size: 12pt;
+    }
+</style>
+<link href="http://netdna.bootstrapcdn.com/font-awesome/4.0.3/css/font-awesome.css" rel="stylesheet">
+
+<script type="text/javascript">
+document.googlePlacesAccess = {initPlaces: initPlaces, getPlaces: getPlaces, loadMaps: loadMaps, initI18N: initI18N};
+
+var places = new Places();
+var map;
+var markersArray = [];
+var previousBalloon = null;
+var loadMapParameters = undefined;
+
+var npI18n = {
+    region: 'en',
+    resources: {
+        'infowindow_enter_name': 'Enter name',
+        'infowindow_enter_address': 'Enter address',
+        'infowindow_enter_description': 'Enter description',
+        'searchfield_enter_query': 'Enter a location',
+        'buttons_ok': 'Ok',
+        'buttons_cancel': 'Cancel'
+    }};
+
+function initialize() {
+    places.addListener(uiPlacesUpdater);
+
+    var placesList = document.getElementById('placesList');
+
+    places.update();
+
+    placesList.onchange = function (e) {
+        var i, selectedIds = [], options = placesList.selectedOptions;
+        for (i = 0; i < options.length; i++) {
+            selectedIds.push(options[i].value);
+        }
+
+        showPins(places.getPlaces(selectedIds));
+    };
+
+    placesList.onkeyup = function (e) {
+        var options, i, selectedIds = [];
+        if (e.which === 8 || e.which === 46) {
+            options = placesList.selectedOptions;
+            for (i = 0; i < options.length; i++) {
+                selectedIds.push(options[i].value);
+            }
+            places.remove(selectedIds);
+        }
+    };
+
+    // -- setup Map --
+    var mapOptions = {
+        center: new google.maps.LatLng(58.2361, 21.22574),
+        zoom: 5
+    };
+    map = new google.maps.Map(document.getElementById('map-canvas'),
+                              mapOptions);
+
+    var input = /** @type {HTMLInputElement} */(
+            document.getElementById('pac-controls'));
+
+    var locations = document.getElementById('locations');
+    map.controls[google.maps.ControlPosition.TOP_LEFT].push(input);
+
+    var autoComplete_input = document.getElementById('pac-input');
+    autoComplete_input.setAttribute("placeholder", npI18n.resources.searchfield_enter_query);
+
+    var autoComplete = new google.maps.places.Autocomplete(autoComplete_input);
+    autoComplete.bindTo('bounds', map);
+
+
+    var okButton = document.getElementById("button_ok");
+    okButton.appendChild(document.createTextNode(npI18n.resources.buttons_ok));
+    okButton.onclick = function () {
+        if (typeof npNotifyOk == 'function') {
+            npNotifyOk(getPlaces());
+        }
+    };
+
+    var cancelButton = document.getElementById("button_cancel");
+    cancelButton.appendChild(document.createTextNode(npI18n.resources.buttons_cancel));
+    cancelButton.onclick = function () {
+        if (typeof npNotifyCancel == 'function') {
+            npNotifyCancel();
+        }
+    };
+
+    map.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(document.getElementById('pac-buttons'));
+
+    google.maps.event.addListener(autoComplete, 'place_changed', function () {
+        var place = autoComplete.getPlace();
+
+        if (!place.geometry) {
+            return;
+        }
+
+        var id = UUID.uuid4();
+        places.add(
+                {
+                    lat: place.geometry.location.lat(),
+                    lng: place.geometry.location.lng(),
+                    name: place.name,
+                    address: place.formatted_address,
+                    types: place.types,
+                    id: id,
+                    description: ""
+
+                });
+
+        showPins(places.getPlaces([id]));
+
+        placesList.selectedIndex = 0;
+    });
+
+    if (loadMapParameters && loadMapParameters.initialAddress) {
+        new google.maps.Geocoder().geocode({ 'address': loadMapParameters.initialAddress}, function (results, status) {
+            if (status == google.maps.GeocoderStatus.OK) {
+                if (results.length > 0) {
+                    map.setCenter(results[0].geometry.location);
+                }
+            }
+        });
+    }
+
+    // End setup map
+
+    setTimeout(function () {
+        document.getElementById('pac-input').focus();
+    }, 1000);
+
+    function uiPlacesUpdater(places) {
+        var option;
+        var i;
+
+        for (i = placesList.children.length - 1; i >= 0; i--) {
+            placesList.removeChild(placesList.children[i]);
+        }
+
+        for (i = 0; i < places.length; i++) {
+            option = document.createElement('option');
+            option.value = places[i].id;
+            option.text = places[i].name + " - " + places[i].address;
+            placesList.appendChild(option);
+        }
+    }
+
+}
+
+
+function Places() {
+    this.savedPlaces = {};
+    this.listeners = [];
+
+
+    this.addListener = function (listener) {
+        this.listeners.push(listener);
+    };
+
+    this.add = function (place) {
+        this.savedPlaces[place.id] = place;
+        this._notifyModelUpdated();
+    };
+
+    this.remove = function (ids) {
+        var i;
+        for (i = 0; i < ids.length; i++) {
+            delete this.savedPlaces[ids[i]];
+        }
+        this._notifyModelUpdated();
+        showPins([]);
+    };
+
+    this.update = function () {
+        this._notifyModelUpdated();
+    };
+
+    this.getPlaces = function (ids) {
+        var result = [];
+        var i;
+        for (i = 0; i < ids.length; i++) {
+            result.push(this.savedPlaces[ids[i]]);
+        }
+        return result;
+    };
+
+    this._notifyModelUpdated = function () {
+        for (var i = 0; i < this.listeners.length; i++) {
+            this.listeners[i](this._placesToArray());
+        }
+    };
+
+    this._placesToArray = function () {
+        var result = [];
+        for (var item in this.savedPlaces) {
+            result.unshift(this.savedPlaces[item]);
+        }
+        return result;
+    };
+
+    this.getAllPlaces = function () {
+        return this._placesToArray();
+    }
+}
+
+function showPins(pins) {
+    var i;
+    var minx = null;
+    var maxx = null;
+    var miny = null;
+    var maxy = null;
+
+    if (!map) {
+        console.log("No map");
+        return;
+    }
+
+    // Remove street view
+    if (map.getStreetView() && map.getStreetView().getVisible) {
+        map.getStreetView().setVisible(false);
+    }
+
+    // Remove markers
+    for (i = 0; i < markersArray.length; i++) {
+        markersArray[i].setMap(null);
+    }
+    markersArray.length = 0;
+
+    if (pins.length === 0) {
+        return;
+    }
+
+    // Show new markers
+    for (i = 0; i < pins.length; i++) {
+        var pin = pins[i];
+        var location = new google.maps.LatLng(pin.lat, pin.lng);
+        var iconData = {
+            size: new google.maps.Size(71, 71),
+            origin: new google.maps.Point(0, 0),
+            anchor: new google.maps.Point(17, 34),
+            scaledSize: new google.maps.Size(35, 35)};
+        if (pin.icon) {
+            iconData.url = pin.icon;
+        }
+        else {
+            iconData.url = "http://maps.gstatic.com/mapfiles/place_api/icons/geocode-71.png";
+        }
+
+        var marker = new google.maps.Marker({
+                                                position: location,
+                                                map: map,
+                                                draggable: true,
+                                                icon: iconData
+                                            });
+        registerBalloonFunction(marker, pin);
+        registerDragFunction(marker, pin);
+        markersArray.push(marker);
+        if (minx === null || minx > pin.lng) {
+            minx = pin.lng;
+        }
+        if (maxx === null || maxx < pin.lng) {
+            maxx = pin.lng;
+        }
+        if (miny === null || miny > pin.lat) {
+            miny = pin.lat;
+        }
+        if (maxy === null || maxy < pin.lat) {
+            maxy = pin.lat;
+        }
+    }
+
+    if (pins.length == 1) {
+        map.setCenter(new google.maps.LatLng(pins[0].lat, pins[0].lng));
+        map.setZoom(16);
+    }
+    else if (minx !== maxx || miny === maxy) {
+        map.fitBounds(new google.maps.LatLngBounds(new google.maps.LatLng(miny, minx), new google.maps.LatLng(maxy, maxx)));
+    }
+}
+
+function closePreviousBalloon() {
+    previousBalloon.close();
+    places.update();
+    previousBalloon = null;
+}
+function showBalloon(pin, marker) {
+
+    if (previousBalloon !== null) {
+        closePreviousBalloon();
+    }
+    previousBalloon = new google.maps.InfoWindow({content: getHtmlForPin(pin)});
+
+    previousBalloon.open(map, marker);
+    google.maps.event.addListener(previousBalloon, 'closeclick', function () {
+        previousBalloon = null;
+        places.update();
+    });
+}
+
+function getHtmlForPin(pin) {
+
+    var tag_name = createTextInput('input', {id: 'tag_name', type: 'text', placeholder: npI18n.resources.infowindow_enter_name, 'class': 'input_size'}, pin.name);
+    var tag_address = createTextInput('input', {id: 'tag_address', type: 'text', placeholder: npI18n.resources.infowindow_enter_address, 'class': 'input_size'}, pin.address);
+    var tag_description = createTextInput('textarea', {id: 'tag_description', type: 'text', placeholder: npI18n.resources.infowindow_enter_description, 'class': 'area_size'}, pin.description);
+
+    tag_name.onkeyup = function () {
+        pin.name = tag_name.value;
+    };
+    tag_name.onkeydown = function (e) {
+        if (e.which === 13) {
+            closePreviousBalloon();
+        }
+    };
+
+    tag_address.onkeyup = function () {
+        pin.address = tag_address.value;
+    };
+    tag_address.onkeydown = function (e) {
+        if (e.which === 13) {
+            closePreviousBalloon();
+        }
+    };
+
+    tag_description.onkeyup = function () {
+        pin.description = tag_description.value;
+    };
+    tag_description.onkeydown = function (e) {
+        if (e.which === 13 && !(e.shiftKey || e.metaKey || e.ctrlKey || e.altKey)) {
+            closePreviousBalloon();
+        }
+    };
+
+    var container = createElement('div');
+
+    container.appendChild(tag_name);
+    container.appendChild(createElement('br'));
+    container.appendChild(tag_address);
+    container.appendChild(createElement('br'));
+    container.appendChild(tag_description);
+
+    return container;
+}
+
+function registerBalloonFunction(marker, pin) {
+    google.maps.event.addListener(marker, 'click', function (event) {
+        console.log(pin);
+
+        showBalloon(pin, marker);
+    });
+}
+
+
+function registerDragFunction(marker, pin) {
+    google.maps.event.addListener(marker, 'dragstart', function (event) {
+        if (previousBalloon !== null) {
+            closePreviousBalloon();
+        }
+    });
+
+    google.maps.event.addListener(marker, 'dragend', function (event) {
+        pin.lat = event.latLng.lat();
+        pin.lng = event.latLng.lng();
+    });
+}
+
+
+function getPlaces() {
+    return JSON.stringify(places.getAllPlaces());
+}
+
+
+function initPlaces(newPlaces) {
+    if (!newPlaces) {
+        return;
+    }
+
+    for (var i = 0; i < newPlaces.length; i++) {
+        places.add(newPlaces[i]);
+    }
+}
+
+function initI18N(newI18N) {
+    npI18n = newI18N;
+}
+
+function loadMaps(mapParameters) {
+    loadMapParameters = mapParameters;
+    var key = "";
+    if (loadMapParameters && loadMapParameters.apiKey) {
+        key = "&key="+loadMapParameters.apiKey;
+    }
+    var script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.src = 'https://maps.googleapis.com/maps/api/js?v=3&sensor=false' +
+            key +
+            '&callback=initialize&libraries=places&language=' + npI18n.region;
+    document.body.appendChild(script);
+}
+
+
+function createElement(element_type, attributes) {
+    var htmlElement = document.createElement(element_type);
+    if (attributes) {
+        for (var property in attributes) {
+            if (attributes.hasOwnProperty(property)) {
+                htmlElement.setAttribute(property, attributes[property]);
+            }
+        }
+    }
+    return htmlElement;
+}
+
+function createTextInput(element_type, attributes, value) {
+    var inputElement = createElement(element_type, attributes);
+    if (value) {
+        inputElement.value = value;
+    }
+    return inputElement;
+}
+
+var UUID = {
+    // Return a randomly generated v4 UUID, per RFC 4122
+    uuid4: function () {
+        return this._uuid(
+                this.randomInt(), this.randomInt(),
+                this.randomInt(), this.randomInt(), 4);
+    },
+
+    // Create a versioned UUID from w1..w4, 32-bit non-negative ints
+    _uuid: function (w1, w2, w3, w4, version) {
+        var uuid = new Array(36);
+        var data = [
+            (w1 & 0xFFFFFFFF),
+            (w2 & 0xFFFF0FFF) | ((version || 4) << 12), // version (1-5)
+            (w3 & 0x3FFFFFFF) | 0x80000000,    // rfc 4122 variant
+            (w4 & 0xFFFFFFFF)
+        ];
+        for (var i = 0, k = 0; i < 4; i++) {
+            var rnd = data[i];
+            for (var j = 0; j < 8; j++) {
+                if (k == 8 || k == 13 || k == 18 || k == 23) {
+                    uuid[k++] = '-';
+                }
+                var r = (rnd >>> 28) & 0xf; // Take the high-order nybble
+                rnd = (rnd & 0x0FFFFFFF) << 4;
+                uuid[k++] = this.hex.charAt(r);
+            }
+        }
+        return uuid.join('');
+    },
+
+    hex: '0123456789abcdef',
+
+    // Return a random integer in [0, 2^32).
+    randomInt: function () {
+        return Math.floor(0x100000000 * Math.random());
+    }
+};
+
+function checkInit() {
+    if (document.location.href.lastIndexOf('about', 0) !== 0) {
+        loadMaps({});
+    }
+}
+
+</script>
+</head>
+<body onload="checkInit();">
+<div id="pac-controls">
+    <input id="pac-input" type="text" class="controls">
+
+    <div id="locations" class="controls" style="width: 100%; height:10em; background-color: rgba(255,255,255,0.1);">
+        <select id="placesList" size="3" multiple style="width: 100%; height:100%; padding: 0px;"></select>
+    </div>
+</div>
+<div id="pac-buttons" style="margin-right: 1em; margin-bottom: 1em;">
+    <button id="button_ok" class="controls buttons"></button>
+    <button id="button_cancel" class="controls buttons" style="width: 6em;"></button>
+</div>
+<div id="map-canvas"></div>
+
+</body>
+</html>
